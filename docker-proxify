@@ -1,0 +1,171 @@
+#!/usr/bin/env perl
+#################################################################################
+#
+# Copyright (c) 2013 Genome Research Ltd.
+# 
+# Author: Joshua C. Randall <jcrandall@alum.mit.edu>
+# 
+# This program is free software: you can redistribute it and/or modify it under
+# the terms of the GNU General Public License as published by the Free Software
+# Foundation; either version 3 of the License, or (at your option) any later
+# version.
+# 
+# This program is distributed in the hope that it will be useful, but WITHOUT
+# ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS
+# FOR A PARTICULAR PURPOSE. See the GNU General Public License for more
+# details.
+# 
+# You should have received a copy of the GNU General Public License along with
+# this program. If not, see <http://www.gnu.org/licenses/>.
+# 
+#################################################################################
+
+use strict;
+use warnings;
+
+use IO::File;
+use Getopt::Long;
+use Pod::Usage;
+
+my $RS_TMP_CONFIG_FILE = "/tmp/redsocks.conf";
+my $RS_SOCKS4_PORT = 12344;
+my $RS_SOCKS5_PORT = 12345;
+my $RS_CONNECT_PORT = 12346;
+my $RS_HTTP_PORT = 12347;
+
+my $http_proxy_url = "";
+my $connect_proxy_url = "";
+my $socks4_proxy_url = "";
+my $socks5_proxy_url = "";
+
+# rs_log is passed along to redsocks and can be one of: 
+#   stderr
+#   "file:/path/to/file"
+#   syslog:FACILITY  facility is any of "daemon", "local0"..."local7"
+my $rs_log = "stderr";
+
+my $man = 0;
+my $help = 0;
+
+my $result = GetOptions( 
+    "http_proxy=s" => \$http_proxy_url,
+    "connect_proxy=s" => \$connect_proxy_url,
+    "socks4_proxy=s" => \$socks4_proxy_url,
+    "socks5_proxy=s" => \$socks5_proxy_url,
+    "rs_log=s" => \$rs_log,
+    "help|?" => \$help,
+    "man" => \$man,
+    ) or pod2usage(2);
+
+pod2usage(-exitval => 0) if $help;
+pod2usage(-exitval => 0, -verbose => 2) if $man;
+
+=head1 NAME
+
+docker-proxify - a wrapper for redsocks and iptables to setup one docker 
+                 container to act as a transparent proxy for another.
+
+=head1 SYNOPSIS
+
+docker-proxify [options]
+
+ Options:
+    --http_proxy	set the http relay proxy to use (URL)
+    --connect_proxy	set the http CONNECT proxy to use (URL)
+    --socks4_proxy	set the SOCKS4 proxy to use (URL)
+    --socks5_proxy	set the SOCKS5 proxy to use (URL)
+    --help		brief help message
+    --man		full documentation
+
+=head1 OPTIONS
+
+=over 8
+
+=item B<--help>
+
+Print a brief help message and exit.
+
+=item B<--man>
+
+Prints the manual page and exits.
+
+=back
+
+=head1 DESCRIPTION
+
+This program sets up configuration for redsocks, launches redsocks, and 
+configures iptables rules so that any connections passed into this 
+container will be routed to the specified proxy server. Only TCP is
+supported at the moment. 
+
+=cut
+
+if ( ($http_proxy_url eq "") && ($connect_proxy_url eq "") && 
+     ($socks4_proxy_url eq "") && ($socks5_proxy_url eq "") ) {
+    pod2usage("Nothing to do, no proxies specified\n");
+}
+
+sub parse_proxy_url {
+    my $proxy_url = shift;
+    $proxy_url = lc($proxy_url);
+
+    my $host = "";
+    my $port = "";
+    if( $proxy_url =~ m/^([a-z]+\:\/\/){0,1}([a-z0-9.-]+)\:([0-9]+)/ ) {
+	$host = $2;
+	$port = $3;
+    } elsif( $proxy_url ne "" ) {
+	print STDERR "Malformed proxy URL: $proxy_url\n";
+    }
+    return($host, $port);
+}
+
+my ($http_proxy_host, $http_proxy_port) = parse_proxy_url($http_proxy_url);
+my ($connect_proxy_host, $connect_proxy_port) = parse_proxy_url($connect_proxy_url);
+my ($socks4_proxy_host, $socks4_proxy_port) = parse_proxy_url($socks4_proxy_url);
+my ($socks5_proxy_host, $socks5_proxy_port) = parse_proxy_url($socks5_proxy_url);
+
+# Generate redsocks configuration file
+my $conf_fh = new IO::File;
+$conf_fh->open(">$RS_TMP_CONFIG_FILE") or die "Could not open $RS_TMP_CONFIG_FILE for output\n";
+
+# First write base section
+print $conf_fh <<EOF;
+base {
+        log_debug = on;
+        log_info = on;
+        log = "$rs_log";
+        daemon = on;
+        redirector = iptables;
+}
+EOF
+
+sub generate_redsocks_section {
+    my $host = shift;
+    my $port = shift;
+    my $local_port = shift;
+    my $type = shift;
+
+    my $rs_section = "";
+    if( $host ne "" && $port > 0 && $port < 65536) {
+	$rs_section = <<EOF;
+redsocks {
+    local_ip = 0.0.0.0;
+    local_port = $local_port;
+    ip = $host;
+    port = $port;
+    type = $type;
+}
+EOF
+    }
+    return $rs_section;
+}
+
+# now write sections for each proxy type
+print $conf_fh generate_redsocks_section($http_proxy_host, $http_proxy_port, $RS_HTTP_PORT, "http-relay");
+print $conf_fh generate_redsocks_section($connect_proxy_host, $connect_proxy_port, $RS_CONNECT_PORT, "http-connect");
+print $conf_fh generate_redsocks_section($socks4_proxy_host, $socks4_proxy_port, $RS_SOCKS4_PORT, "socks4");
+print $conf_fh generate_redsocks_section($socks5_proxy_host, $socks5_proxy_port, $RS_SOCKS5_PORT, "socks5");
+
+$conf_fh->close();
+

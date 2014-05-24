@@ -27,6 +27,7 @@ use IO::File;
 use Getopt::Long;
 use Pod::Usage;
 
+my $RS_BIN = "redsocks";
 my $RS_TMP_CONFIG_FILE = "/tmp/redsocks.conf";
 my $RS_SOCKS4_PORT = 12344;
 my $RS_SOCKS5_PORT = 12345;
@@ -136,7 +137,7 @@ base {
         log_debug = on;
         log_info = on;
         log = "$rs_log";
-        daemon = on;
+        daemon = off;
         redirector = iptables;
 }
 EOF
@@ -169,4 +170,9 @@ print $conf_fh generate_redsocks_section($socks4_proxy_host, $socks4_proxy_port,
 print $conf_fh generate_redsocks_section($socks5_proxy_host, $socks5_proxy_port, $RS_SOCKS5_PORT, "socks5");
 
 $conf_fh->close();
+
+
+
+# run redsocks and never return
+exec { $RS_BIN } $RS_BIN, ("-c", $RS_TMP_CONFIG_FILE) or die("Couldn't exec $RS_BIN\n");
 

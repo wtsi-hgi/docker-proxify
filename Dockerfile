@@ -7,7 +7,7 @@ FROM jrandall/redsocks
 MAINTAINER "Joshua C. Randall" <jcrandall@alum.mit.edu>
 
 # Install docker-within-docker requirements
-RUN apt-get install -qqy ca-certificates lxc aufs-tools
+RUN apt-get install -qqy ca-certificates lxc aufs-tools git 
 ADD https://get.docker.io/builds/Linux/x86_64/docker-latest /usr/local/bin/docker
 RUN chmod +x /usr/local/bin/docker
 VOLUME /var/lib/docker

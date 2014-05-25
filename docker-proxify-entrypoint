@@ -9,7 +9,7 @@ docker-proxify-daemon --http_proxy=${http_proxy} --https_proxy=${https_proxy} \
 if [ -n "${local_net}" ]
 then
     echo "Adding explicit route for ${local_net}"
-    ip route add $(ip route get to ${local_net} | head -n 1)
+    ip route add ${local_net} $(ip route get to ${local_net} | head -n 1 | cut -d" " -f2)
 fi
 
 # setup and launch docker daemon

@@ -8,7 +8,7 @@ docker-proxify-daemon --http_proxy=${http_proxy} --https_proxy=${https_proxy} \
 # N.B. should also make sure this is skipped in redsocks
 if [ -n "${local_net}" ]
 then
-    route=$(ip route get ${local_net} | head -n 1 | cut -d" " -f2)
+    route=$(ip route get ${local_net} | head -n 1 | cut -d" " -f2- )
     echo "Adding explicit route for ${local_net}: ${route}"
     ip route add ${local_net} ${route}
 fi

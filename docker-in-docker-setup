@@ -126,5 +126,5 @@ then
 fi
 
 # start docker daemon
-nohup docker -d 2>&1 > /var/log/docker.log &
+nohup docker -d > /var/log/docker.out 2> /var/log/docker.err &
 

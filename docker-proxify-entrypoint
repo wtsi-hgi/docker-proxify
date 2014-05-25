@@ -1,8 +1,23 @@
-#!/bin/bash
+#!/bin/sh
 
+# setup redsocks and iptables rules
 docker-proxify-daemon --http_proxy=${http_proxy} --https_proxy=${https_proxy} \
                       --socks4_proxy=${socks4_proxy} --socks5_proxy=${socks5_proxy}
 
+# setup and launch docker daemon
 docker-in-docker-setup
 
-bash -c "$@"
+# wait for docker to create domain socket
+if [ \! -S /var/run/docker.sock ]
+then
+    echo -n "Waiting for docker daemon to start."
+    while [ \! -S /var/run/docker.sock ]
+    do
+	echo -n "."
+	sleep 0.002 || sleep 1
+    done
+    echo " ready."
+fi
+
+# launch requested command
+sh -c "$*"

@@ -4,6 +4,14 @@
 docker-proxify-daemon --http_proxy=${http_proxy} --https_proxy=${https_proxy} \
                       --socks4_proxy=${socks4_proxy} --socks5_proxy=${socks5_proxy}
 
+# add a local route if requested (to avoid docker choosing it for the bridge)
+# N.B. should also make sure this is skipped in redsocks
+if [ -n "${local_net}" ]
+then
+    echo "Adding explicit route for ${local_net}"
+    ip route add $(ip route get to ${local_net} | head -n 1)
+fi
+
 # setup and launch docker daemon
 docker-in-docker-setup
 

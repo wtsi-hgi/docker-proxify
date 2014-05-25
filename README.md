@@ -13,7 +13,7 @@ Because the docker daemon is run inside the container, you need to run it with t
 
 The entrypoint defaults to an interactive bash shell from which docker can be run:
 ```bash
-# docker run -i -t --privileged -e http_proxy -e https_proxy jrandall/docker-proxify
+$ docker run -i -t --privileged -e http_proxy -e https_proxy jrandall/docker-proxify
 Waiting for docker daemon to start......... ready.
 root@3014a04166fb:/docker# docker run -i -t ubuntu bash
 Unable to find image 'ubuntu' locally
@@ -76,7 +76,7 @@ root@3a57fc8ec405:/#
 
 You can also run docker within docker all in one command: 
 ```bash
-# docker run -i -t --privileged -e http_proxy -e https_proxy jrandall/docker-proxify docker run -i -t ubuntu bash
+$ docker run -i -t --privileged -e http_proxy -e https_proxy jrandall/docker-proxify docker run -i -t ubuntu bash
 Waiting for docker daemon to start........................................ ready.
 Unable to find image 'ubuntu' locally
 Pulling repository ubuntu
@@ -108,7 +108,7 @@ root@14119cc449d7:/#
 
 And, of course, you can also perform builds: 
 ```bash
-# docker run -i -t --privileged -e http_proxy -e https_proxy jrandall/docker-proxify
+$ docker run -i -t --privileged -e http_proxy -e https_proxy jrandall/docker-proxify
 Waiting for docker daemon to start........................................ ready.
 root@cfe1d7f50ae7:/docker# docker build -q github.com/dockerfile/ubuntu
 Uploading context 179.7 kB

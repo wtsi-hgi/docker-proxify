@@ -62,10 +62,10 @@ my $man = 0;
 my $help = 0;
 
 my $result = GetOptions( 
-    "http_proxy=s" => \$http_proxy_url,
-    "connect_proxy|https_proxy=s" => \$connect_proxy_url,
-    "socks4_proxy=s" => \$socks4_proxy_url,
-    "socks5_proxy=s" => \$socks5_proxy_url,
+    "http_proxy:s" => \$http_proxy_url,
+    "connect_proxy|https_proxy:s" => \$connect_proxy_url,
+    "socks4_proxy:s" => \$socks4_proxy_url,
+    "socks5_proxy:s" => \$socks5_proxy_url,
     "rs_log=s" => \$rs_log,
     "help|?" => \$help,
     "man" => \$man,

@@ -1,7 +1,7 @@
 #!/usr/bin/env perl
 #################################################################################
 #
-# Copyright (c) 2013 Genome Research Ltd.
+# Copyright (c) 2014 Genome Research Ltd.
 # 
 # Author: Joshua C. Randall <jcrandall@alum.mit.edu>
 # 
@@ -33,6 +33,19 @@ my $RS_SOCKS4_PORT = 12344;
 my $RS_SOCKS5_PORT = 12345;
 my $RS_CONNECT_PORT = 12346;
 my $RS_HTTP_PORT = 12347;
+my $RS_BIND_ADDR = "0.0.0.0";
+
+my $IPTABLES_BIN = "iptables";
+my @IPTABLES_SKIP_ADDRESS_SPECS = (
+    "0.0.0.0/8",
+    "10.0.0.0/8",
+    "127.0.0.0/8",
+    "169.254.0.0/16",
+    "172.16.0.0/12",
+    "192.168.0.0/16",
+    "224.0.0.0/4",
+    "240.0.0.0/4",
+    );
 
 my $http_proxy_url = "";
 my $connect_proxy_url = "";
@@ -152,27 +165,173 @@ sub generate_redsocks_section {
     if( $host ne "" && $port > 0 && $port < 65536) {
 	$rs_section = <<EOF;
 redsocks {
-    local_ip = 0.0.0.0;
+    local_ip = $RS_BIND_ADDR;
     local_port = $local_port;
     ip = $host;
     port = $port;
     type = $type;
 }
+
 EOF
     }
     return $rs_section;
 }
 
 # now write sections for each proxy type
-print $conf_fh generate_redsocks_section($http_proxy_host, $http_proxy_port, $RS_HTTP_PORT, "http-relay");
-print $conf_fh generate_redsocks_section($connect_proxy_host, $connect_proxy_port, $RS_CONNECT_PORT, "http-connect");
-print $conf_fh generate_redsocks_section($socks4_proxy_host, $socks4_proxy_port, $RS_SOCKS4_PORT, "socks4");
-print $conf_fh generate_redsocks_section($socks5_proxy_host, $socks5_proxy_port, $RS_SOCKS5_PORT, "socks5");
+my $http_section = generate_redsocks_section($http_proxy_host, $http_proxy_port, $RS_HTTP_PORT, "http-relay");
+print $conf_fh "$http_section\n";
 
-$conf_fh->close();
+my $connect_section = generate_redsocks_section($connect_proxy_host, $connect_proxy_port, $RS_CONNECT_PORT, "http-connect");
+print $conf_fh "$connect_section\n";
+
+my $socks4_section = generate_redsocks_section($socks4_proxy_host, $socks4_proxy_port, $RS_SOCKS4_PORT, "socks4");
+print $conf_fh "$socks4_section\n";
+
+my $socks5_section = generate_redsocks_section($socks5_proxy_host, $socks5_proxy_port, $RS_SOCKS5_PORT, "socks5");
+print $conf_fh "$socks5_section\n";
+
+# finished writing redsocks conf file
+$conf_fh->close() or die "Could not close redsocks configuration file $RS_TMP_CONFIG_FILE\n";
 
 
+# configure iptables chains for each type of config
+sub configure_iptables_nat_chain {
+    my $chain_type = shift;
+    my $redsocks_port = shift;
+    my $skip_address_specs = shift;
+    
+    my $out;
+    $out = `${IPTABLES_BIN} -t nat -N REDSOCKS_${chain_type} 2>&1`;
+    die "Could not create chain for REDSOCKS_${chain_type}\n".$out unless ($? == 0);
+    
+    foreach my $skip_address_spec (@{$skip_address_specs}) {
+	$out = `${IPTABLES_BIN} -t nat -A REDSOCKS_${chain_type} -d ${skip_address_spec} -j RETURN 2>&1`;
+	die "Could not add address spec skip rule for ${skip_address_spec}\n".$out unless ($? == 0);
+    }
 
-# run redsocks and never return
-exec { $RS_BIN } $RS_BIN, ("-c", $RS_TMP_CONFIG_FILE) or die("Couldn't exec $RS_BIN\n");
+    `${IPTABLES_BIN} -t nat -A REDSOCKS_${chain_type} -p tcp -j REDIRECT --to-ports ${redsocks_port} 2>&1`;
+    die "Could not setup redirect to redsocks port ${redsocks_port}\n".$out unless ($? == 0);
+}
 
+sub delete_iptables_nat_chain {
+    my $chain_type = shift;
+    
+    my $out = `${IPTABLES_BIN} -t nat -F REDSOCKS_${chain_type} 2>&1`;	    
+    die "Could not flush chain for REDSOCKS_${chain_type}\n".$out unless ($? == 0);
+
+    $out = `${IPTABLES_BIN} -t nat -X REDSOCKS_${chain_type} 2>&1`;	    
+    die "Could not delete chain for REDSOCKS_${chain_type}\n".$out unless ($? == 0);
+}
+
+if($connect_section ne "") {
+    configure_iptables_nat_chain("CONNECT", $RS_CONNECT_PORT, \@IPTABLES_SKIP_ADDRESS_SPECS);
+}
+
+if($http_section ne "") {
+    configure_iptables_nat_chain("HTTP", $RS_HTTP_PORT, \@IPTABLES_SKIP_ADDRESS_SPECS);
+}
+
+if($socks4_section ne "") {
+    configure_iptables_nat_chain("SOCKS4", $RS_SOCKS4_PORT, \@IPTABLES_SKIP_ADDRESS_SPECS);
+}
+
+if($socks5_section ne "") {
+    configure_iptables_nat_chain("SOCKS5", $RS_SOCKS5_PORT, \@IPTABLES_SKIP_ADDRESS_SPECS);
+}
+
+sub configure_iptables_dest_port {
+    my $dest_addr_spec = shift;
+    my $dest_port = shift;
+    my $proxy_type = shift;
+    my $chain = shift; # only PREROUTING or OUTPUT can be used with -i
+    my $interface = shift || "";
+    
+    my $iptables_cmd = "${IPTABLES_BIN} -t nat -A $chain";
+    if($interface ne "") {
+	$iptables_cmd .= " -i $interface";
+    }
+    $iptables_cmd .= " -p tcp -d ${dest_addr_spec} --dport ${dest_port} -j REDSOCKS_${proxy_type}";
+    my $out = `${iptables_cmd} 2>&1`;
+    die "Could not setup proxy chain rule for ${dest_addr_spec}:${dest_port} to ${proxy_type}\n" unless ($? == 0);
+}
+
+sub delete_iptables_dest_port {
+    my $dest_addr_spec = shift;
+    my $dest_port = shift;
+    my $proxy_type = shift;
+    my $chain = shift; # only PREROUTING or OUTPUT can be used with -i
+    my $interface = shift || "";
+
+    my $iptables_cmd = "${IPTABLES_BIN} -t nat -D $chain";
+    if($interface ne "") {
+	$iptables_cmd .= " -i $interface";
+    }
+    $iptables_cmd .= " -p tcp -d ${dest_addr_spec} --dport ${dest_port} -j REDSOCKS_${proxy_type}";
+    my $out = `${iptables_cmd} 2>&1`;
+    die "Could not delete proxy chain rule for ${dest_addr_spec}:${dest_port} to ${proxy_type}\n" unless ($? == 0);
+}
+
+configure_iptables_dest_port("0.0.0.0/0", 80, "HTTP", "OUTPUT");
+configure_iptables_dest_port("0.0.0.0/0", 443, "CONNECT", "OUTPUT");
+
+configure_iptables_dest_port("0.0.0.0/0", 80, "HTTP", "PREROUTING", "docker0");
+configure_iptables_dest_port("0.0.0.0/0", 443, "CONNECT", "PREROUTING", "docker0");
+
+
+# fork and run redsocks until interrupt
+# this code adapted from "safe pipe open for reading" 
+# described in: http://perldoc.perl.org/perlipc.html#Safe-Pipe-Opens
+my $child_stdout_fh;
+my $pid = open($child_stdout_fh, "-|");
+defined($pid) or die("can't fork: $!");
+
+if (!$pid) { # $pid is only set in parent
+    # child, first duplicate stderr to stdout
+    open(STDERR, ">&STDOUT") or die "can't dup stdout to stderr\n";
+    # call exec and never return (exec_lfs will exit on error)
+    exec { $RS_BIN } $RS_BIN, ("-c", $RS_TMP_CONFIG_FILE) or die "Could not exec $RS_BIN\n";
+    #`${RS_BIN} -c ${RS_TMP_CONFIG_FILE} 2>&1`;
+    
+    # as a safety precaution, force child to exit (this should never be reached)
+    die "child process attempted to continue unexpectedly after exec\n";
+} else { 
+    # parent, process data from child
+    sub cleanup {
+	delete_iptables_dest_port("0.0.0.0/0", 80, "HTTP", "OUTPUT");
+	delete_iptables_dest_port("0.0.0.0/0", 443, "CONNECT", "OUTPUT");
+	
+	delete_iptables_dest_port("0.0.0.0/0", 80, "HTTP", "PREROUTING", "docker0");
+	delete_iptables_dest_port("0.0.0.0/0", 443, "CONNECT", "PREROUTING", "docker0");
+	
+	if($connect_section ne "") {
+	    delete_iptables_nat_chain("CONNECT");
+	}
+	
+	if($http_section ne "") {
+	    delete_iptables_nat_chain("HTTP");
+	}
+	
+	if($socks4_section ne "") {
+	    delete_iptables_nat_chain("SOCKS4");
+	}
+	
+	if($socks5_section ne "") {
+	    delete_iptables_nat_chain("SOCKS5");
+	}
+	
+	print "docker-proxify: cleaned up iptables after interrupt.\n";
+	
+	# send signal to kill redsocks in child
+	kill 'TERM', $pid or die "could not terminate redsocks\n";
+	
+	# continuing, will exit after flusing output from child
+    }
+
+    $SIG{"INT"} = "cleanup";
+    while(my $outline = <$child_stdout_fh>) {
+	chomp $outline;
+	print "redsocks: $outline\n";
+    }
+    
+    die "docker-proxify: redsocks terminated.\n";
+}

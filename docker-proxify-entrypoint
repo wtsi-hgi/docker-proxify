@@ -1,0 +1,8 @@
+#!/bin/bash
+
+docker-proxify-daemon --http_proxy=${http_proxy} --https_proxy=${https_proxy} \
+                      --socks4_proxy=${socks4_proxy} --socks5_proxy=${socks5_proxy}
+
+docker-in-docker-setup
+
+bash -c "$@"

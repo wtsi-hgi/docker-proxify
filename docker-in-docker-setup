@@ -1,0 +1,130 @@
+#!/bin/bash
+#################################################################################
+#
+# Copyright (c) 2014 Genome Research Ltd.
+# 
+# Author: Joshua C. Randall <jcrandall@alum.mit.edu>
+# 
+# This program is free software: you can redistribute it and/or modify it under
+# the terms of the GNU General Public License as published by the Free Software
+# Foundation; either version 3 of the License, or (at your option) any later
+# version.
+# 
+# This program is distributed in the hope that it will be useful, but WITHOUT
+# ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS
+# FOR A PARTICULAR PURPOSE. See the GNU General Public License for more
+# details.
+# 
+# You should have received a copy of the GNU General Public License along with
+# this program. If not, see <http://www.gnu.org/licenses/>.
+# 
+#################################################################################
+
+MOUNT_BIN="mount"
+MOUNTPOINT_BIN="mountpoint"
+
+# ensure_mounted() - ensure a mountpoint is mounted
+#
+# if it isn't, try to mount it using the mount command given
+# if that doesn't work, print the errmsg
+# finally, exit with exitcode only if exitcode>0 (otherwise don't exit)
+ensure_mounted(){
+    local mount_point=$1
+    local mount_type=$2
+    local mount_opts=$3
+    local mount_dev=$4
+    local errmsg=$5
+    local exitcode=$6
+
+    if [ \! -d ${mount_point} ]
+    then
+	mkdir ${mount_point}
+    fi
+    ${MOUNTPOINT_BIN} -q ${mount_point}
+    if [ $? != 0 ]
+    then
+    # not a mountpoint, attempt to mount
+	${MOUNT_BIN} -n -t ${mount_type} -o ${mount_opts} ${mount_dev} ${mount_point}
+	if [ $? != 0 ]
+	then
+	    if [ ${exitcode} > 0 ]
+	    then
+		echo "Error: could not mount ${mount_point}"
+	    else
+		echo "Warning: could not mount ${mount_point}"
+	    fi
+	    echo ${errmsg}
+	    if [ ${exitcode} > 0 ]
+	    then
+		exit ${exitcode}
+	    fi
+	fi
+    fi
+}
+
+# setup cgroups
+CGROUP=/sys/fs/cgroup
+ensure_mounted ${CGROUP} tmpfs "uid=0,gid=0,mode=0755" cgroup "Make sure the outer container uses 'docker run --privileged'" 1
+
+# setup apparmor
+SECURITY=/sys/kernel/security
+ensure_mounted ${SECURITY} securityfs "none" sys "AppArmor may cause problems for 'docker run --privileged'" 2
+
+# mount all cgroup subsystems from upper-level
+subsystems=$(cut -d: -f2 /proc/1/cgroup)
+for subsystem in ${subsystems}
+do
+    ensure_mounted ${CGROUP}/${subsystem} cgroup "${subsystem}" cgroup "This was unexpected" 3
+done
+
+# create a symlink for any subsystems named "name=x" (linking "x" to "name=x")
+for subsystem in $(echo "${subsystems}" | grep '^name=')
+do
+    x=$(echo ${subsystem} | sed s/^name=//)
+    echo "Linking cgroup ${x} to ${subsystem}"
+    ln -s ${CGROUP}/${subsystem} ${CGROUP}/${x}
+done
+
+# create a symlink for any pairs of subsystems named "x,y" (linking "y,x" to "x,y")
+# e.g. some systems mount "cpuacct,cpu" under a share named "cpu,cpuacct"
+for subsystem in $(echo "${subsystems}" | grep ',')
+do
+    x=$(echo ${subsystem} | cut -d, -f1)
+    y=$(echo ${subsystem} | cut -d, -f2)
+    echo "Linking cgroup ${y},${x} to ${subsystem}"
+    ln -s ${CGROUP}/${subsystem} ${CGROUP}/${y},${x}
+done
+
+if [ -z "$(echo "${subsystems}" | grep 'devices')" ]
+then
+    echo "Warning: the 'devices' cgroup is not mounted"
+elif [ -z "$(echo "${subsystems}" | grep '^devices$')" ]
+then
+    shared_subsys=$(echo "${subsystems}" | grep 'devices')
+    echo "Warning: the 'devices' cgroup should be in its own hierarchy rather than in ${shared_subsys}"
+fi
+
+# close all file descriptors other than STDIN/STDOUT/STDERR
+pushd /proc/self/fd >/dev/null
+for FD in *
+do
+    case "${FD}" in
+	[012])
+	    # keep stdin/stdout/stderr
+	    ;;
+	*)
+	    eval exec "${FD}>&-"
+	    ;;
+    esac
+done
+popd >/dev/null
+
+# make sure docker daemon's pidfile is not present
+if [ -e /var/run/docker.pid ]
+then
+    rm -f /var/run/docker.pid
+fi
+
+# start docker daemon
+nohup docker -d 2>&1 > /var/log/docker.log &
+

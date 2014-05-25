@@ -1,0 +1,4 @@
+#!/bin/bash
+
+nohup docker-proxify $@ > /var/log/docker-proxify.out 2> /var/log/docker-proxify.err &
+

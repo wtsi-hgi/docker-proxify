@@ -35,7 +35,7 @@ my $RS_CONNECT_PORT = 12346;
 my $RS_HTTP_PORT = 12347;
 my $RS_BIND_ADDR = "0.0.0.0";
 
-my $IPTABLES_BIN = "iptables";
+my $IPTABLES_BIN = "iptables -w";
 my @IPTABLES_SKIP_ADDRESS_SPECS = (
     "0.0.0.0/8",
     "10.0.0.0/8",

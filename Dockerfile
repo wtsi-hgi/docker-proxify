@@ -21,4 +21,5 @@ RUN chmod +x /usr/local/bin/docker-*
 
 RUN mkdir /docker
 WORKDIR /docker
+CMD ["bash"]
 ENTRYPOINT ["/usr/local/bin/docker-proxify-entrypoint"]

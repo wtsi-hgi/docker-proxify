@@ -1,4 +1,4 @@
-#!/bin/sh
+#!/bin/bash
 
 # setup redsocks and iptables rules
 docker-proxify-daemon --http_proxy=${http_proxy} --https_proxy=${https_proxy} \
@@ -13,20 +13,26 @@ then
     ip route add ${local_net} ${route}
 fi
 
-# setup and launch docker daemon
+# setup docker daemon
 docker-in-docker-setup
 
-# wait for docker to create domain socket
-if [ \! -S /var/run/docker.sock ]
-then
-    echo -n "Waiting for docker daemon to start."
-    while [ \! -S /var/run/docker.sock ]
-    do
-	echo -n "."
-	sleep 0.002 || sleep 1
-    done
-    echo " ready."
-fi
+# start docker daemon
+nohup docker -d > /var/log/docker.out 2> /var/log/docker.err &
+dockerpid=$!
+
+# wait for docker.err to log 'acceptconnections() = OK'
+docker_ready=""
+echo -n "Waiting for docker daemon to be ready."
+while test -z "${docker_ready}" 
+do
+    # docker hasn't reported that it is ready yet, check if it has exited
+    grep -q exit /var/log/docker.err && echo " docker daemon has exited!" && echo "docker log:" && cat /var/log/docker.err && exit 1
+
+    echo -n "."
+    sleep 0.05 || sleep 1
+    docker_ready=$(grep 'acceptconnections.*=.*OK' /var/log/docker.err)
+done
+echo " docker ready."
 
 # launch requested command
 sh -c "$*"

@@ -125,6 +125,3 @@ then
     rm -f /var/run/docker.pid
 fi
 
-# start docker daemon
-nohup docker -d > /var/log/docker.out 2> /var/log/docker.err &
-

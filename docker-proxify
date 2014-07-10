@@ -52,6 +52,8 @@ my $connect_proxy_url = "";
 my $socks4_proxy_url = "";
 my $socks5_proxy_url = "";
 
+my $port_spec = "80:HTTP,443:CONNECT";
+
 # rs_log is passed along to redsocks and can be one of: 
 #   stderr
 #   "file:/path/to/file"
@@ -60,14 +62,17 @@ my $rs_log = "stderr";
 
 my $man = 0;
 my $help = 0;
+my $verbose = 0;
 
 my $result = GetOptions( 
     "http_proxy:s" => \$http_proxy_url,
     "connect_proxy|https_proxy:s" => \$connect_proxy_url,
     "socks4_proxy:s" => \$socks4_proxy_url,
     "socks5_proxy:s" => \$socks5_proxy_url,
+    "port_spec:s" => \$port_spec,
     "rs_log=s" => \$rs_log,
     "help|?" => \$help,
+    "verbose|v" => \$verbose,
     "man" => \$man,
     ) or pod2usage(2);
 
@@ -89,7 +94,9 @@ docker-proxify [options]
     --https_proxy	synonym for --connect_proxy
     --socks4_proxy	set the SOCKS4 proxy to use (URL)
     --socks5_proxy	set the SOCKS5 proxy to use (URL)
+    --port_spec         set the port specification (default: "$port_spec")
     --help|-?		brief help message
+    --verbose|-v        more verbose output
     --man		full documentation
 
 =head1 OPTIONS
@@ -103,6 +110,13 @@ Print a brief help message and exit.
 =item B<--man>
 
 Prints the manual page and exits.
+
+=item B<--port_spec>
+
+A string containing a comma-delimited list of port:proxy_type mappings, 
+where port is the integer port number to be forwarded via the proxy 
+and proxy_type is the type of proxy on which to forward it (one of 
+"HTTP", "CONNECT", "SOCKS4", or "SOCKS5"). 
 
 =back
 
@@ -271,12 +285,17 @@ sub delete_iptables_dest_port {
     die "Could not delete proxy chain rule for ${dest_addr_spec}:${dest_port} to ${proxy_type}\n" unless ($? == 0);
 }
 
-configure_iptables_dest_port("0.0.0.0/0", 80, "HTTP", "OUTPUT");
-configure_iptables_dest_port("0.0.0.0/0", 443, "CONNECT", "OUTPUT");
-
-configure_iptables_dest_port("0.0.0.0/0", 80, "HTTP", "PREROUTING", "docker0");
-configure_iptables_dest_port("0.0.0.0/0", 443, "CONNECT", "PREROUTING", "docker0");
-
+print "setting up port forwarding according to port_spec: $port_spec\n" if($verbose > 0);
+foreach my $port_proxy_type (split /,/, $port_spec) {
+    my ($port, $proxy_type) = split /:/, $port_proxy_type;
+    
+    die "invalid port_spec $port_spec: $port is not a valid port\n" unless ($port =~ m/^[0-9]+$/);
+    die "invalid port_spec $port_spec: $proxy_type is not a valid proxy_type\n" unless ($proxy_type =~ m/^(HTTP|CONNECT|SOCKS4|SOCKS5)$/);
+    
+    print "configuring $port to forward via $proxy_type\n" if($verbose > 0);
+    configure_iptables_dest_port("0.0.0.0/0", $port, $proxy_type, "OUTPUT");
+    configure_iptables_dest_port("0.0.0.0/0", $port, $proxy_type, "PREROUTING", "docker0");
+}
 
 # fork and run redsocks until interrupt
 # this code adapted from "safe pipe open for reading" 
@@ -297,11 +316,16 @@ if (!$pid) { # $pid is only set in parent
 } else { 
     # parent, process data from child
     sub cleanup {
-	delete_iptables_dest_port("0.0.0.0/0", 80, "HTTP", "OUTPUT");
-	delete_iptables_dest_port("0.0.0.0/0", 443, "CONNECT", "OUTPUT");
-	
-	delete_iptables_dest_port("0.0.0.0/0", 80, "HTTP", "PREROUTING", "docker0");
-	delete_iptables_dest_port("0.0.0.0/0", 443, "CONNECT", "PREROUTING", "docker0");
+	foreach my $port_proxy_type (split /,/, $port_spec) {
+	    my ($port, $proxy_type) = split /:/, $port_proxy_type;
+	    
+	    die "invalid port_spec $port_spec: $port is not a valid port\n" unless ($port =~ m/^[0-9]+$/);
+	    die "invalid port_spec $port_spec: $proxy_type is not a valid proxy_type\n" unless ($proxy_type =~ m/^(HTTP|CONNECT|SOCKS4|SOCKS5)$/);
+	    
+	    print "removing forwarding of $port via $proxy_type\n" if($verbose > 0);
+	    delete_iptables_dest_port("0.0.0.0/0", $port, $proxy_type, "OUTPUT");
+	    delete_iptables_dest_port("0.0.0.0/0", $port, $proxy_type, "PREROUTING", "docker0");
+	}
 	
 	if($connect_section ne "") {
 	    delete_iptables_nat_chain("CONNECT");

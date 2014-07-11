@@ -5,7 +5,8 @@ Provides a docker container in which outgoing network traffic is transparently p
 
 I developed this because many of my machines are stuck behind a corporate firewall, and there is not currently any good way to support running or building containers in that environment without baking the proxy information into the Dockerfile (which would break portability of the containers). There is a discussion of this issue on [docker repository issue 4962](https://github.com/dotcloud/docker/issues/4962). 
 
-Currently the container is hardcoded for port 80 to be routed over the specified http_proxy and port 443 is routed over the specified https_proxy, both for the container itself and for any other docker containers running inside it (including `docker build` jobs). Later versions will allow for customisation of which destination addresses and ports are routed over which proxy (currently there is no way to route anything over SOCKS4/5). 
+By default the docker-proxify container will route port 80 over the specified HTTP proxy and port 443 over the specified CONNECT proxy, both for the container itself and for any other docker containers running inside it (including `docker build` jobs). This default can be overridden by supplying a port_spec environment variable containing a comma-separated list of port:proxy pairs. For example, the default is: "80:HTTP,443:CONNECT"
+One could add a forwarding of port 8000 also over HTTP by setting port_spec to: "80:HTTP,443:CONNECT,8000:HTTP"
 
 Usage
 -----

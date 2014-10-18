@@ -152,3 +152,6 @@ root@4ad182e3a976:/docker# docker run -i -t afcd247466a7
 [ root@5556a3ca0a17:~ ]$
 ```
 
+Local Proxy Servers
+-------------------
+If you are trying to access a proxy server running on localhost (for example, cntlm as a pass-through to an NTLM proxy requiring authentication, or a local squid cache), please note that you will not be able to access a daemon listening on the host from within the container. For example, setting `http_proxy = '127.0.0.1:3128'` will not allow docker-proxify to access a proxy server running on the container host listening on 3128. To work around this problem, you can either run the proxy server from within docker-proxify or you will need to bind the daemon to an interface with a real IP address. To run a proxy server from within docker-proxify, you'd need to first run docker-proxify and install the proxy server software and any configuration you need, and then commit those changes to a new image from the changes you made to the container, and then run that image in place of 'jrandall/docker-proxify'.
